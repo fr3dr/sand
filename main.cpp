@@ -11,6 +11,7 @@
 
 enum CellType {
     EMPTY,
+    STATIC,
     STONE,
     SAND,
     WATER,
@@ -22,7 +23,8 @@ enum CellType {
 enum CellCatagory {
     NONE,
     SOLID,
-    LIQUID
+    LIQUID,
+    GAS
 };
 
 struct Particle {
@@ -34,6 +36,7 @@ struct Particle {
     bool onFloor = false;
     int fallingTime = 0;
     bool updatedThisFrame = false;
+    int aliveTime = 0;
 };
 
 struct Button {
@@ -43,16 +46,14 @@ struct Button {
 
 
 // define particles
-const Color stoneColor = DARKGRAY;
-const Color sandColor = BEIGE;
-const Color waterColor = BLUE;
-const Color acidColor = GREEN;
-
 Particle emptyParticle;
-Particle sandParticle = {.type = SAND, .catagory = SOLID, .color = sandColor};
-Particle waterParticle = {.type = WATER, .catagory = LIQUID, .color = waterColor};
-Particle stoneParticle = {.type = STONE, .catagory = SOLID, .color = stoneColor};
-Particle acidParticle = {.type = ACID, .catagory = LIQUID, .color = acidColor};
+Particle staticParticle = {.type = STATIC, .catagory = SOLID, .color = {30, 30, 30, 255}};
+Particle sandParticle = {.type = SAND, .catagory = SOLID, .color = BEIGE};
+Particle waterParticle = {.type = WATER, .catagory = LIQUID, .color = BLUE};
+Particle stoneParticle = {.type = STONE, .catagory = SOLID, .color = DARKGRAY};
+Particle acidParticle = {.type = ACID, .catagory = LIQUID, .color = GREEN};
+Particle steamParticle = {.type = STEAM, .catagory = GAS, .color = GRAY};
+Particle lavaParticle = {.type = LAVA, .catagory = LIQUID, .color = {255, 100, 0, 255}};
 
 
 const int buttonSize = 32;
@@ -67,7 +68,7 @@ Particle grid[gridWidth][gridHeight];
 int brushSize = 2;
 
 bool clearMode = false;
-int clearModeSpeed = 3;
+int clearModeSpeed = 6;
 
 
 // helper functions
@@ -81,40 +82,61 @@ Color randomColorTint(Color baseColor, int bottomRange, int topRange) {
     return ColorFromHSV(color.x, color.y, color.z);
 }
 
+bool chance(int chance) {
+    return GetRandomValue(1, 100) <= chance;
+}
+
 
 // update functions
 void updateSand(int x, int y, Particle particle) {
-    int rand = GetRandomValue(1, 100) < 50 ? -1 : 1;
+    int rand = chance(50) ? -1 : 1;
 
     if (inBounds(x, y+1) && grid[x][y+1].type == EMPTY) {
         grid[x][y] = emptyParticle;
         grid[x][y+1] = particle;
-    } else if (inBounds(x+rand, y+1) && grid[x+rand][y+1].type == EMPTY) {
+    } else if (inBounds(x+rand, y+1) && grid[x+rand][y+1].type == EMPTY && grid[x+rand][y].catagory != SOLID) {
         grid[x][y] = emptyParticle;
         grid[x+rand][y+1] = particle;
-    } else if (inBounds(x, y+1) && grid[x][y+1].catagory == LIQUID) {
-        if (GetRandomValue(1, 100) < 80) {
+    }
+    
+    else if (inBounds(x, y+1) && grid[x][y+1].catagory == LIQUID) {
+        if (chance(80)) {
             grid[x][y] = grid[x][y+1];
-            grid[x][y + 1] = particle;
+            grid[x][y+1] = particle;
         }
-    } else if (inBounds(x+rand, y+1) && grid[x+rand][y+1].catagory == LIQUID) {
-        if (GetRandomValue(1, 100) < 30) {
+    } else if (inBounds(x+rand, y+1) && grid[x+rand][y+1].catagory == LIQUID && grid[x+rand][y].catagory != SOLID) {
+        if (chance(30)) {
             grid[x][y] = grid[x+rand][y+1];
             grid[x+rand][y+1] = particle;
         }
     }
+
+    else if (inBounds(x, y+1) && grid[x][y+1].catagory == GAS) {
+        grid[x][y] = grid[x][y+1];
+        grid[x][y+1] = particle;
+    }
 }
 
 void updateWater(int x, int y, Particle particle) {
-    particle.color = GetRandomValue(1, 100) < 5 ? randomColorTint(waterColor, 80, 100) : particle.color; 
+    particle.color = chance(5) ? randomColorTint(waterParticle.color, 80, 100) : particle.color; 
     grid[x][y] = particle;
 
-    int rand = GetRandomValue(1, 100) < 50 ? -1 : 1;
+    int rand = chance(50) ? -1 : 1;
 
     if (inBounds(x, y+1) && grid[x][y+1].type == EMPTY) {
         grid[x][y] = emptyParticle;
         grid[x][y+1] = particle;
-    } else if (inBounds(x+1, y+1) && inBounds(x-1, y+1) && grid[x+1][y+1].type == EMPTY && grid[x-1][y+1].type == EMPTY) {
+    }
+
+    else if (inBounds(x, y+1) && grid[x][y+1].catagory == GAS) {
+        grid[x][y] = grid[x][y+1];
+        grid[x][y+1] = particle;
+    } else if (inBounds(x, y+1) && grid[x][y+1].catagory == LIQUID && grid[x][y+1].type != WATER) {
+        grid[x][y] = grid[x][y+1];
+        grid[x][y+1] = particle;
+    }
+
+    else if (inBounds(x+1, y+1) && inBounds(x-1, y+1) && grid[x+1][y+1].type == EMPTY && grid[x-1][y+1].type == EMPTY) {
         grid[x][y] = emptyParticle;
         grid[x+rand][y+1] = particle;
     } else if (inBounds(x+1, y+1) && grid[x+1][y+1].type == EMPTY) {
@@ -139,16 +161,39 @@ void updateWater(int x, int y, Particle particle) {
     }
 }
 
+void updateStone(int x, int y, Particle particle) {
+    if (inBounds(x, y+1) && grid[x][y+1].type == EMPTY) {
+        grid[x][y] = emptyParticle;
+        grid[x][y+1] = particle;
+    } else if (inBounds(x, y+1) && (grid[x][y+1].catagory == LIQUID || grid[x][y+1].catagory == GAS)) {
+        grid[x][y] = grid[x][y+1];
+        grid[x][y+1] = particle;
+    }
+}
+
 void updateAcid(int x, int y, Particle particle) {
-    int rand = GetRandomValue(1, 100) < 50 ? -1 : 1;
+    int rand = chance(50) ? -1 : 1;
 
     if (inBounds(x, y+1) && grid[x][y+1].type == EMPTY) {
         grid[x][y] = emptyParticle;
         grid[x][y+1] = particle;
-    } else if (inBounds(x, y+1) && grid[x][y+1].type != EMPTY && grid[x][y+1].type != ACID && GetRandomValue(1, 100) < 20) {
+    }
+
+    else if (inBounds(x, y+1) && grid[x][y+1].type != EMPTY && grid[x][y+1].type != ACID && chance(20)) {
         grid[x][y] = emptyParticle;
-        grid[x][y+1] = GetRandomValue(1, 100) < 80 ? emptyParticle : particle;
-    } else if (inBounds(x+1, y+1) && inBounds(x-1, y+1) && grid[x+1][y+1].type == EMPTY && grid[x-1][y+1].type == EMPTY) {
+        grid[x][y+1] = chance(80) ? emptyParticle : particle;
+    } else if (inBounds(x, y-1) && grid[x][y-1].type != EMPTY && grid[x][y-1].type != ACID && chance(20)) {
+        grid[x][y] = emptyParticle;
+        grid[x][y-1] = chance(80) ? emptyParticle : particle;
+    } else if (inBounds(x+1, y) && grid[x+1][y].type != EMPTY && grid[x+1][y].type != ACID && chance(20)) {
+        grid[x][y] = emptyParticle;
+        grid[x+1][y] = chance(80) ? emptyParticle : particle;
+    } else if (inBounds(x+1, y) && grid[x+1][y].type != EMPTY && grid[x+1][y].type != ACID && chance(20)) {
+        grid[x][y] = emptyParticle;
+        grid[x+1][y] = chance(80) ? emptyParticle : particle;
+    }
+
+    else if (inBounds(x+1, y+1) && inBounds(x-1, y+1) && grid[x+1][y+1].type == EMPTY && grid[x-1][y+1].type == EMPTY) {
         grid[x][y] = emptyParticle;
         grid[x+rand][y+1] = particle;
     } else if (inBounds(x+1, y+1) && grid[x+1][y+1].type == EMPTY) {
@@ -173,6 +218,82 @@ void updateAcid(int x, int y, Particle particle) {
     }
 }
 
+void updateSteam(int x, int y, Particle particle) {
+    if (particle.aliveTime > 1024 && chance(1)) {
+        grid[x][y] = waterParticle;
+        return;
+    }
+
+    particle.color = ColorBrightness(steamParticle.color, -particle.aliveTime / 3000.0f);
+    grid[x][y] = particle;
+
+    int randX = chance(50) ? -1 : 1;
+    int randY = chance(90) ? -1 : 1;
+
+    if (inBounds(x+randX, y+randY) && grid[x+randX][y+randY].type == EMPTY) {
+        grid[x][y] = emptyParticle;
+        grid[x+randX][y+randY] = particle;
+    } else if (inBounds(x+randX, y+randY) && grid[x+randX][y+randY].catagory == LIQUID) {
+        grid[x][y] = grid[x+randX][y+randY];
+        grid[x+randX][y+randY] = particle;
+    }
+}
+
+void updateLava(int x, int y, Particle particle) {
+    particle.color = chance(5) ? randomColorTint(lavaParticle.color, 50, 100) : particle.color;
+    grid[x][y] = particle;
+
+    int rand = chance(50) ? -1 : 1;
+
+    if (inBounds(x, y+1) && grid[x][y+1].type == EMPTY) {
+        grid[x][y] = emptyParticle;
+        grid[x][y+1] = particle;
+    }
+
+    else if (inBounds(x, y+1) && grid[x][y+1].catagory == GAS) {
+        grid[x][y] = grid[x][y+1];
+        grid[x][y+1] = particle;
+    }
+
+    else if (inBounds(x, y+1) && grid[x][y+1].type == WATER) {
+        grid[x][y] = steamParticle;
+        grid[x][y+1] = stoneParticle;
+    } else if (inBounds(x, y-1) && grid[x][y-1].type == WATER) {
+        grid[x][y-1] = steamParticle;
+        grid[x][y] = stoneParticle;
+    } else if (inBounds(x+1, y) && grid[x+1][y].type == WATER) {
+        grid[x][y] = steamParticle;
+        grid[x+1][y] = stoneParticle;
+    } else if (inBounds(x-1, y) && grid[x-1][y].type == WATER) {
+        grid[x][y] = steamParticle;
+        grid[x-1][y] = stoneParticle;
+    }
+
+    else if (inBounds(x+1, y+1) && inBounds(x-1, y+1) && grid[x+1][y+1].type == EMPTY && grid[x-1][y+1].type == EMPTY) {
+        grid[x][y] = emptyParticle;
+        grid[x+rand][y+1] = particle;
+    } else if (inBounds(x+1, y+1) && grid[x+1][y+1].type == EMPTY) {
+        grid[x][y] = emptyParticle;
+        grid[x+1][y+1] = particle;
+    } else if (inBounds(x-1, y+1) && grid[x-1][y+1].type == EMPTY) {
+        grid[x][y] = emptyParticle;
+        grid[x-1][y+1] = particle;
+    } else if (!inBounds(x, y+1) || grid[x][y+1].type != EMPTY) {
+        if (particle.dirX == 0) {
+            particle.dirX = rand;
+        }
+        
+        if (!inBounds(x+particle.dirX, y) || grid[x+particle.dirX][y].type != EMPTY) {
+            particle.dirX = -particle.dirX;
+        }
+
+        if (inBounds(x+particle.dirX, y) && grid[x+particle.dirX][y].type == EMPTY) {
+            grid[x][y] = emptyParticle;
+            grid[x+particle.dirX][y] = particle;
+        }
+    }
+}
+
 
 int main() {
     // initialize grid
@@ -183,11 +304,14 @@ int main() {
     }
 
     // create buttons
-    Button stoneButton = {STONE, stoneColor};
-    Button sandButton = {SAND, sandColor};
-    Button waterButton = {WATER, waterColor};
-    Button acidButton = {ACID, acidColor};
-    std::array buttonArray = std::array<Button, 4>{stoneButton, sandButton, waterButton, acidButton};
+    Button staticButton = {staticParticle.type, staticParticle.color};
+    Button stoneButton = {stoneParticle.type, stoneParticle.color};
+    Button sandButton = {sandParticle.type, sandParticle.color};
+    Button waterButton = {waterParticle.type, waterParticle.color};
+    Button acidButton = {acidParticle.type, acidParticle.color};
+    Button steamButton = {steamParticle.type, steamParticle.color};
+    Button lavaButton = {lavaParticle.type, lavaParticle.color};
+    std::array buttonArray = std::array<Button, 7>{staticButton, stoneButton, sandButton, waterButton, acidButton, steamButton, lavaButton};
 
     CellType selectedCellType = SAND;
 
@@ -229,6 +353,9 @@ int main() {
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && GetMouseY() < gridHeight * cellSize && clearMode == false){
             Particle newParticle = emptyParticle;
             switch (selectedCellType) {
+                case STATIC:
+                    newParticle = staticParticle;
+                    break;
                 case SAND:
                     newParticle = sandParticle;
                     newParticle.color = randomColorTint(newParticle.color, 50, 80);
@@ -241,6 +368,12 @@ int main() {
                     break;
                 case ACID:
                     newParticle = acidParticle;
+                    break;
+                case STEAM:
+                    newParticle = steamParticle;
+                    break;
+                case LAVA:
+                    newParticle = lavaParticle;
                     break;
                 default:
                     break;
@@ -297,24 +430,38 @@ int main() {
         // grid logic
         for (int x = 0; x < gridWidth; x++) {
             for (int y = 0; y < gridHeight; y++) {
-                Particle particle = grid[x][y];
+                if (clearMode) {
+                    break;
+                }
 
-                if (particle.type == EMPTY || particle.updatedThisFrame || clearMode) {
+                Particle* particle = &grid[x][y];
+
+                if (particle->type == EMPTY || particle->updatedThisFrame) {
                     continue;
                 }
 
                 particleAmmount++;
-                particle.updatedThisFrame = true;
+                particle->updatedThisFrame = true;
+                particle->aliveTime++;
 
-                switch (particle.type) {
+                switch (particle->type) {
                     case SAND:
-                        updateSand(x, y, particle);
+                        updateSand(x, y, *particle);
                         break;
                     case WATER:
-                        updateWater(x, y, particle);
+                        updateWater(x, y, *particle);
+                        break;
+                    case STONE:
+                        updateStone(x, y, *particle);
                         break;
                     case ACID:
-                        updateAcid(x, y, particle);
+                        updateAcid(x, y, *particle);
+                        break;
+                    case STEAM:
+                        updateSteam(x, y, *particle);
+                        break;
+                    case LAVA:
+                        updateLava(x, y, *particle);
                         break;
                     default:
                         break;
